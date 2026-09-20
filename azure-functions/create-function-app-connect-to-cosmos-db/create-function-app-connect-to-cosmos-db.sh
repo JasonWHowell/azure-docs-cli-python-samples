@@ -1,44 +1,98 @@
 #!/bin/bash
 
-# create a resource group with location
-az group create \
-  --name myResourceGroup \
-  --location westeurope
+# Passed validation in Cloud Shell on 2/28/2026
 
-# create a storage account 
-az storage account create \
-  --name funccosmosdbstore \
-  --location westeurope \
-  --resource-group myResourceGroup \
-  --sku Standard_LRS
+# Function app, storage account, Cosmos DB, and user identity names must be unique.
 
-# create a new function app, assign it to the resource group you have just created
-az functionapp create \
-  --name myfunccosmosdb \
-  --resource-group myResourceGroup \
-  --storage-account funccosmosdbstore \
-  --consumption-plan-location westeurope
+# Variable block
+let "randomIdentifier=$RANDOM*$RANDOM"
+location="eastus"
+resourceGroup="msdocs-azure-functions-rg-$randomIdentifier"
+tag="create-function-app-connect-to-cosmos-db"
+storage="msdocsaccount$randomIdentifier"
+userIdentity="msdocs-managed-identity-$randomIdentifier"
+functionApp="msdocs-serverless-function-$randomIdentifier"
+cosmosDbAccount="msdocs-cosmosdb-$randomIdentifier"
+cosmosDbDatabase="documents-db"
+cosmosDbContainer="documents"
+skuStorage="Standard_LRS"
+functionsVersion="4"
+languageWorker="python"
+languageVersion="3.11"
 
-# create cosmosdb database, name must be lowercase.
-az cosmosdb create \
-  --name myfunccosmosdb \
-  --resource-group myResourceGroup
+# Install the Application Insights extension
+az extension add --name application-insights
 
-# Retrieve cosmosdb connection string
-endpoint=$(az cosmosdb show \
-  --name myfunccosmosdb \
-  --resource-group myResourceGroup \
-  --query documentEndpoint \
-  --output tsv)
+# Create a resource group
+echo "Creating $resourceGroup in "$location"..."
+az group create --name $resourceGroup --location "$location" --tags $tag
 
-key=$(az cosmosdb list-keys \
-  --name myfunccosmosdb \
-  --resource-group myResourceGroup \
-  --query primaryMasterKey \
-  --output tsv)
+# Create an Azure storage account in the resource group with key access disabled.
+echo "Creating $storage"
+az storage account create --name $storage --location "$location" --resource-group $resourceGroup \
+    --sku $skuStorage --allow-blob-public-access false --allow-shared-key-access false
 
-# configure function app settings to use cosmosdb connection string
-az functionapp config appsettings set \
-  --name myfunccosmosdb \
-  --resource-group myResourceGroup \
-  --setting CosmosDB_Endpoint=$endpoint CosmosDB_Key=$key
+# Create a user-assigned managed identity
+echo "Creating $userIdentity"
+output=$(az identity create --name $userIdentity --resource-group $resourceGroup --location $location \
+    --query "{userId:id, principalId: principalId, clientId: clientId}" -o json)
+
+# Use jq to parse the output and assign the properties to variables
+userId=$(echo $output | jq -r '.userId')
+principalId=$(echo $output | jq -r '.principalId')
+clientId=$(echo $output | jq -r '.clientId')
+
+# Get the storage ID and create a role assignment (Storage Blob Data Owner) for the identity
+storageId=$(az storage account show --resource-group $resourceGroup --name $storage --query 'id' -o tsv)
+az role assignment create --assignee-object-id $principalId --assignee-principal-type ServicePrincipal \
+    --role "Storage Blob Data Owner" --scope $storageId
+
+# Create the function app in a Flex Consumption plan
+echo "Creating $functionApp"
+az functionapp create --resource-group $resourceGroup --name $functionApp --flexconsumption-location $location \
+    --runtime $languageWorker --runtime-version $languageVersion --storage-account $storage \
+    --deployment-storage-auth-type UserAssignedIdentity --deployment-storage-auth-value $userIdentity
+
+# Create a role assignment (Monitoring Metrics Publisher) in Application Insights for the user identity
+appInsights=$(az monitor app-insights component show --resource-group $resourceGroup \
+    --app $functionApp --query "id" --output tsv)
+az role assignment create --role "Monitoring Metrics Publisher" --assignee $principalId --scope $appInsights
+
+# Update app settings to use managed identities for host storage connections
+clientId=$(az identity show --name $userIdentity --resource-group $resourceGroup \
+    --query 'clientId' -o tsv)
+az functionapp config appsettings set --name $functionApp --resource-group $resourceGroup \
+    --settings AzureWebJobsStorage__accountName=$storage AzureWebJobsStorage__credential=managedidentity \
+    AzureWebJobsStorage__clientId=$clientId \
+    APPLICATIONINSIGHTS_AUTHENTICATION_STRING="ClientId=$clientId;Authorization=AAD"
+az functionapp config appsettings delete --name $functionApp \
+    --resource-group $resourceGroup --setting-names AzureWebJobsStorage
+
+# Create an Azure Cosmos DB account
+echo "Creating $cosmosDbAccount"
+az cosmosdb create --name $cosmosDbAccount --resource-group $resourceGroup \
+    --locations regionName=$location failoverPriority=0 isZoneRedundant=False
+
+# Create a database and containers for the Cosmos DB account
+az cosmosdb sql database create --account-name $cosmosDbAccount --resource-group $resourceGroup \
+    --name $cosmosDbDatabase
+az cosmosdb sql container create --account-name $cosmosDbAccount --resource-group $resourceGroup \
+    --database-name $cosmosDbDatabase --name $cosmosDbContainer --partition-key-path "/id"
+az cosmosdb sql container create --account-name $cosmosDbAccount --resource-group $resourceGroup \
+    --database-name $cosmosDbDatabase --name leases --partition-key-path "/id"
+
+# Assign the Cosmos DB Built-in Data Contributor role to the managed identity
+cosmosDbId=$(az cosmosdb show --name $cosmosDbAccount --resource-group $resourceGroup --query 'id' -o tsv)
+az cosmosdb sql role assignment create --account-name $cosmosDbAccount --resource-group $resourceGroup \
+    --role-definition-name "Cosmos DB Built-in Data Contributor" --scope "/" \
+    --principal-id $principalId
+
+# Get the Cosmos DB endpoint and configure the function app to connect using managed identity
+endpoint=$(az cosmosdb show --name $cosmosDbAccount --resource-group $resourceGroup --query documentEndpoint --output tsv)
+az functionapp config appsettings set --name $functionApp --resource-group $resourceGroup \
+    --settings COSMOS_CONNECTION__accountEndpoint=$endpoint COSMOS_CONNECTION__credential=managedidentity \
+    COSMOS_CONNECTION__clientId=$clientId \
+    COSMOS_DATABASE_NAME=$cosmosDbDatabase COSMOS_CONTAINER_NAME=$cosmosDbContainer
+
+# echo "Deleting all resources"
+# az group delete --name $resourceGroup -y

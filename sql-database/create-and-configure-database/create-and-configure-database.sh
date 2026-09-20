@@ -1,40 +1,42 @@
 #!/bin/bash
+# Passed validation in Cloud Shell 12/01/2021
 
-# Set an admin login and password for your database
-export adminlogin=ServerAdmin
-export password=ChangeYourAdminPassword1
-# The logical server name has to be unique in the system
-export servername=server-$RANDOM
-# The ip address range that you want to allow to access your DB
-export startip=0.0.0.0
-export endip=0.0.0.0
+# <FullScript>
+# Create a single database and configure a firewall rule
+# <SetParameterValues>
+# Variable block
+let "randomIdentifier=$RANDOM*$RANDOM"
+location="East US"
+resourceGroup="msdocs-azuresql-rg-$randomIdentifier"
+tag="create-and-configure-database"
+server="msdocs-azuresql-server-$randomIdentifier"
+database="msdocsazuresqldb$randomIdentifier"
+login="azureuser"
+password="Pa$$w0rD-$randomIdentifier"
+# Specify appropriate IP address values for your environment
+# to limit access to the SQL Database server
+startIp=0.0.0.0
+endIp=0.0.0.0
 
-# Create a resource group
-az group create \
-	--name myResourceGroup \
-	--location westeurope
+echo "Using resource group $resourceGroup with login: $login, password: $password..."
+# </SetParameterValues>
+# <CreateResourceGroup>
+echo "Creating $resourceGroup in $location..."
+az group create --name $resourceGroup --location "$location" --tags $tag
+# </CreateResourceGroup>
+# <CreateServer>
+echo "Creating $server in $location..."
+az sql server create --name $server --resource-group $resourceGroup --location "$location" --admin-user $login --admin-password $password
+# </CreateServer>
+# <CreateFirewallRule>
+echo "Configuring firewall..."
+az sql server firewall-rule create --resource-group $resourceGroup --server $server -n AllowYourIp --start-ip-address $startIp --end-ip-address $endIp
+# </CreateFirewallRule>
+# <CreateDatabase>
+echo "Creating $database on $server..."
+az sql db create --resource-group $resourceGroup --server $server --name $database --sample-name AdventureWorksLT --edition GeneralPurpose --family Gen5 --capacity 2 --zone-redundant true # zone redundancy is only supported on premium and business critical service tiers
+# </CreateDatabase>
 
-# Create a logical server in the resource group
-az sql server create \
-	--name $servername \
-	--resource-group myResourceGroup \
-	--location westeurope  \
-	--admin-user $adminlogin \
-	--admin-password $password
-
-# Configure a firewall rule for the server
-az sql server firewall-rule create \
-	--resource-group myResourceGroup \
-	--server $servername \
-	-n AllowYourIp \
-	--start-ip-address $startip \
-	--end-ip-address $endip
-
-# Create a database in the server
-az sql db create \
-	--resource-group myResourceGroup \
-	--server $servername \
-	--name mySampleDatabase \
-	--sample-name AdventureWorksLT \
-	--service-objective S0
-
+# </FullScript>
+# echo "Deleting all resources"
+# az group delete --name $resourceGroup -y

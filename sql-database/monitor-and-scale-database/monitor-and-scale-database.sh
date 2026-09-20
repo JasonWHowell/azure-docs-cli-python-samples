@@ -1,40 +1,37 @@
 #!/bin/bash
+# Passed validation in Cloud Shell 12/01/2021
 
-# Set an admin login and password for your database
-export adminlogin=ServerAdmin
-export password=ChangeYourAdminPassword1
-# the logical server name has to be unique in the system
-export servername=server-$RANDOM
+# <FullScript>
+# Monitor and scale a single database in Azure SQL Database
 
-# Create a resource group
-az group create \
-	--name myResourceGroup \
-	-location westeurope 
+# Variable block
+let "randomIdentifier=$RANDOM*$RANDOM"
+location="East US"
+resourceGroup="msdocs-azuresql-rg-$randomIdentifier"
+tag="monitor-and-scale-database"
+server="msdocs-azuresql-server-$randomIdentifier"
+database="msdocsazuresqldb$randomIdentifier"
+login="azureuser"
+password="Pa$$w0rD-$randomIdentifier"
 
-# Create a server
-az sql server create \
-	--name $servername \
-	--resource-group myResourceGroup \
-	--location westeurope \
-	--admin-user $adminlogin \
-	--admin-password $password
+echo "Using resource group $resourceGroup with login: $login, password: $password..."
 
-# Create a database
-az sql db create \
-	--resource-group myResourceGroup \
-	--server $servername \
-	--name mySampleDatabase \
-	--service-objective S0
+echo "Creating $resourceGroup in $location..."
+az group create --name $resourceGroup --location "$location" --tags $tag
 
-# Monitor database size
-az sql db list-usages \
-	--name mySampleDatabase \
-	--resource-group myResourceGroup \
-	--name $servername
+echo "Creating $server on $resource..."
+az sql server create --name $server --resource-group $resourceGroup --location "$location" --admin-user $login --admin-password $password
 
-# Scale up database to S1 performance level (create command executes update if DB already exists)
-az sql db create \
-	--resource-group myResourceGroup \
-	--server $servername \
-	--name mySampleDatabase \
-	--service-objective S1
+echo "Creating $database on $server..."
+az sql db create --resource-group $resourceGroup --server $server --name $database --edition GeneralPurpose --family Gen5 --capacity 2 
+
+echo "Monitoring size of $database..."
+az sql db list-usages --name $database --resource-group $resourceGroup --server $server
+
+echo "Scaling up $database..." # create command executes update if database already exists
+az sql db create --resource-group $resourceGroup --server $server --name $database --edition GeneralPurpose --family Gen5 --capacity 4
+
+# </FullScript>
+
+# echo "Deleting all resources"
+# az group delete --name $resourceGroup -y

@@ -1,29 +1,35 @@
 #!/bin/bash
+# Passed validation in Cloud Shell on 2/28/2026
 
-gitrepo=<Replace with your GitHub repo URL e.g. https://github.com/Azure-Samples/functions-quickstart.git>
-token=<Replace with a GitHub access token>
+# Function app and storage account names must be unique.
+let "randomIdentifier=$RANDOM*$RANDOM"
+location="eastus"
+resourceGroup="msdocs-azure-functions-rg-$randomIdentifier"
+tag="deploy-function-app-with-function-github"
+storage="msdocsaccount$randomIdentifier"
+functionApp="msdocs-serverless-function-$randomIdentifier"
+skuStorage="Standard_LRS"
+functionsVersion="4"
+runtime="node"
+runtimeVersion="20"
+# Public GitHub repository containing an Azure Functions code project.
+gitrepo=https://github.com/Azure-Samples/functions-quickstart-javascript
 
-# Enable authenticated git deployment
-az functionapp deployment source update-token \
-  --git-token $token
+# Create a resource group
+echo "Creating $resourceGroup in "$location"..."
+az group create --name $resourceGroup --location "$location" --tags $tag
 
-# Create a resource group.
-az group create \
-  --name myResourceGroup \
-  --location westeurope
+# Create an Azure storage account in the resource group.
+echo "Creating $storage"
+az storage account create --name $storage --location "$location" --resource-group $resourceGroup --sku $skuStorage
 
-# Create an azure storage account
-az storage account create \
-  --name funcghcontstore \
-  --location westeurope \
-  --resource-group myResourceGroup \
-  --sku Standard_LRS
+# Create a serverless function app in the resource group.
+echo "Creating $functionApp"
+az functionapp create --name $functionApp --storage-account $storage \
+    --consumption-plan-location "$location" --resource-group $resourceGroup \
+    --runtime $runtime --runtime-version $runtimeVersion \
+    --functions-version $functionsVersion \
+    --deployment-source-url $gitrepo --deployment-source-branch main
 
-# Create Function App
-az functionapp create \
-  --name funcgithubcontinuous \
-  --storage-account funcghcontstore \
-  --consumption-plan-location westeurope \
-  --resource-group myResourceGroup \
-  --deployment-source-url $gitrepo \
-  --deployment-source-branch master
+# echo "Deleting all resources"
+# az group delete --name $resourceGroup -y

@@ -1,57 +1,44 @@
 #!/bin/bash
+# Passed validation in Cloud Shell 12/01/2021
 
-# Set an admin login and password for your database
-export adminlogin=ServerAdmin
-export password=ChangeYourAdminPassword1
-# The logical server name has to be unique in the system
-export servername=server-$RANDOM
+# <FullScript>
+# Move a database in SQL Database in a SQL elastic pool
 
-# Create a resource group
-az group create \
-	--name myResourceGroup \
-	--location westeurope 
+# Variable block
+let "randomIdentifier=$RANDOM*$RANDOM"
+location="East US"
+resourceGroup="msdocs-azuresql-rg-$randomIdentifier"
+tag="move-database-between-pools"
+server="msdocs-azuresql-server-$randomIdentifier"
+database="msdocsazuresqldb$randomIdentifier"
+login="azureuser"
+password="Pa$$w0rD-$randomIdentifier"
 
-# Create a logical server in the resource group
-az sql server create \
-	--name $servername \
-	--resource-group myResourceGroup \
-	--location westeurope \
-	--admin-user $adminlogin \
-	--admin-password $password
+pool="msdocs-azuresql-pool-$randomIdentifier"
+secondaryPool="msdocs-azuresql-secondary-pool-$randomIdentifier"
 
-# Create two pools in the logical server
-az sql elastic-pools create \
-	--resource-group myResourceGroup \
-	--location westeurope  \
-	--server $servername \
-	--name myFirstPool \
-	--dtu 50 \
-	--database-dtu-max 20
-az sql elastic-pools create \
-	--resource-group myResourceGroup \
-	--location westeurope  \
-	--server $servername \
-	--name MySecondPool \
-	--dtu 50 \
-	--database-dtu-max 50
+echo "Using resource group $resourceGroup with login: $login, password: $password..."
 
-# Create a database in the first pool
-az sql db create \
-	--resource-group myResourceGroup \
-	--server $servername \
-	--name mySampleDatabase \
-	--elastic-pool-name myFirstPool
+echo "Creating $resourceGroup in $location..."
+az group create --name $resourceGroup --location "$location" --tags $tag
 
-# Move the database to the second pool - create command updates the db if it exists
-az sql db create \
-	--resource-group myResourceGroup \
-	--server-name $servername \
-	--name mySampleDatabase \
-	--elastic-pool-name mySecondPool
+echo "Creating $server in $location..."
+az sql server create --name $server --resource-group $resourceGroup --location "$location" --admin-user $login --admin-password $password
 
-# Move the database to standalone S1 performance level
-az sql db create \
-	--resource-group myResourceGroup \
-	--server $servername \
-	--name mySampleDatabase \
-	--service-objective S1
+echo "Creating $pool and $secondaryPool..."
+az sql elastic-pool create --resource-group $resourceGroup --server $server --name $pool --edition GeneralPurpose --family Gen5 --capacity 2
+az sql elastic-pool create --resource-group $resourceGroup --server $server --name $secondaryPool --edition GeneralPurpose --family Gen5 --capacity 2
+
+echo "Creating $database in $pool..."
+az sql db create --resource-group $resourceGroup --server $server --name $database --elastic-pool $pool
+
+echo "Moving $database to $secondaryPool..." # create command updates an existing datatabase
+az sql db create --resource-group $resourceGroup --server $server --name $database --elastic-pool $secondaryPool
+
+echo "Upgrade $database tier..."
+az sql db create --resource-group $resourceGroup --server $server --name $database --service-objective S0
+
+# </FullScript>
+
+# echo "Deleting all resources"
+# az group delete --name $resourceGroup -y

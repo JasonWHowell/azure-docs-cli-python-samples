@@ -1,18 +1,35 @@
 #!/bin/bash
+# Passed validation in Cloud Shell on 2/28/2026
 
-# Create resource group
-az group create --name myResourceGroup --location westeurope
+# For the recommended serverless plan, see create-function-app-flex-consumption.
+# Function app and storage account names must be unique.
 
-# Create an azure storage account
-az storage account create \
-  --name myconsumptionstore \
-  --location westeurope \
-  --resource-group myResourceGroup \
-  --sku Standard_LRS
+# Variable block
+let "randomIdentifier=$RANDOM*$RANDOM"
+location="eastus"
+resourceGroup="msdocs-azure-functions-rg-$randomIdentifier"
+tag="create-function-app-consumption"
+storage="msdocsaccount$randomIdentifier"
+functionApp="msdocs-serverless-function-$randomIdentifier"
+skuStorage="Standard_LRS"
+functionsVersion="4"
+runtime="dotnet-isolated"
+runtimeVersion="8.0"
 
-# Create Function App
-az functionapp create \
-  --name myconsumptionfunc \
-  --storage-account myconsumptionstore \
-  --consumption-plan-location westeurope \
-  --resource-group myResourceGroup
+# Create a resource group
+echo "Creating $resourceGroup in "$location"..."
+az group create --name $resourceGroup --location "$location" --tags $tag
+
+# Create an Azure storage account in the resource group.
+echo "Creating $storage"
+az storage account create --name $storage --location "$location" --resource-group $resourceGroup --sku $skuStorage
+
+# Create a serverless function app in the resource group.
+echo "Creating $functionApp"
+az functionapp create --name $functionApp --storage-account $storage \
+    --consumption-plan-location "$location" --resource-group $resourceGroup \
+    --runtime $runtime --runtime-version $runtimeVersion \
+    --functions-version $functionsVersion
+
+# echo "Deleting all resources"
+# az group delete --name $resourceGroup -y
